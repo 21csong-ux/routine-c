@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>ROUTINE C</title>
+<title>RoutineC</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -91,7 +91,7 @@ const go=s=>setScreen(s);
 return(
 <div style={{minHeight:"100vh",backgroundColor:C.bg,color:C.ink,fontFamily:fb}}>
 <nav style={{position:"sticky",top:0,zIndex:100,backgroundColor:"rgba(14,14,12,0.95)",backdropFilter:"blur(14px)",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 16px",height:50}}>
-<div style={{fontFamily:fd,fontSize:13,letterSpacing:"0.16em",color:C.gold}}>ROUTINE C</div>
+<div style={{fontFamily:fd,fontSize:13,letterSpacing:"0.16em",color:C.gold}}>RoutineC</div>
 <div style={{display:"flex"}}>
 {[{id:"landing",l:"홈"},{id:"quiz",l:"진단"},{id:"scan",l:"스캔"},{id:"tracker",l:"지표"},{id:"dashboard",l:"루틴"}].map(tab=>{
 const active=screen===tab.id||(tab.id==="quiz"&&["loading","result"].includes(screen));
@@ -178,10 +178,10 @@ const prompt="당신은 임상 영양사+한의학 웰니스 전문가 AI입니�
 try{
 const raw=await callAPI([{role:"user",content:prompt}],4096);
 const parsed=parseJ(raw);
-if(!parsed)console.error("ROUTINE C: 진단 응답을 파싱하지 못해 기본 루틴으로 대체합니다.",raw);
+if(!parsed)console.error("RoutineC: 진단 응답을 파싱하지 못해 기본 루틴으로 대체합니다.",raw);
 setTimeout(()=>onDone(parsed||{...fallback(age),_fallback:true}),300);
 }catch(e){
-console.error("ROUTINE C: 진단 API 호출 실패, 기본 루틴으로 대체합니다.",e);
+console.error("RoutineC: 진단 API 호출 실패, 기본 루틴으로 대체합니다.",e);
 setTimeout(()=>onDone({...fallback(age),_fallback:true}),300);
 }
 },2800);
