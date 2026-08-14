@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>다세대 관리</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#0E0E12;color:#F0F0F4;font-family:system-ui,-apple-system,sans-serif;}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+@keyframes spin{to{transform:rotate(360deg);}}
+::selection{background:rgba(106,143,196,0.25);}
+::-webkit-scrollbar{width:3px;}
+::-webkit-scrollbar-thumb{background:#2A2A32;border-radius:2px;}
+input:focus,textarea:focus,select:focus{outline:none;}
+button{cursor:pointer;font-family:system-ui,-apple-system,sans-serif;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef}=React;
+
+/* ============================================================
+   Firebase 설정 — Firebase 콘솔에서 만든 프로젝트의 값으로 교체하세요.
+   (프로젝트 설정 > 일반 > 내 앱 > SDK 설정 및 구성 > 구성)
+   자세한 설정 방법은 같은 폴더의 README.md 를 참고하세요.
+   ============================================================ */
+const FIREBASE_CONFIG={
+  apiKey:"YOUR_API_KEY",
+  authDomain:"YOUR_PROJECT.firebaseapp.com",
+  projectId:"YOUR_PROJECT",
+  storageBucket:"YOUR_PROJECT.appspot.com",
+  messagingSenderId:"YOUR_SENDER_ID",
+  appId:"YOUR_APP_ID"
+};
+
+const CONFIGURED=FIREBASE_CONFIG.apiKey!=="YOUR_API_KEY";
+if(CONFIGURED){firebase.initializeApp(FIREBASE_CONFIG);}
+const auth=CONFIGURED?firebase.auth():null;
+const db=CONFIGURED?firebase.firestore():null;
+
+const C={
+  bg:"#0E0E12",bgCard:"#16161C",surface:"#1E1E26",surfaceHigh:"#282832",
+  ink:"#F0F0F4",inkMuted:"#96969E",inkFaint:"#48484E",
+  blue:"#6A8FC4",blueLight:"#9BB8DE",blueFaint:"rgba(106,143,196,0.14)",
+  green:"#4A9C7C",greenLight:"#7ACBA6",greenFaint:"rgba(74,156,124,0.14)",
+  amber:"#C4A05A",amberFaint:"rgba(196,160,90,0.14)",
+  red:"#C4685A",redFaint:"rgba(196,104,90,0.14)",
+  border:"#2A2A32"
+};
+
+function fmtMoney(n){
+  if(n===""||n===null||n===undefined)return "-";
+  return Number(n).toLocaleString("ko-KR")+"원";
+}
+function daysLeft(dateStr){
+  if(!dateStr)return null;
+  const today=new Date(); today.setHours(0,0,0,0);
+  const end=new Date(dateStr+"T00:00:00");
+  return Math.round((end-today)/86400000);
+}
+function ddayInfo(dateStr){
+  const d=daysLeft(dateStr);
+  if(d===null)return {label:"-",color:C.inkFaint,bg:"transparent"};
+  if(d<0)return {label:"만료됨 ("+Math.abs(d)+"일 지남)",color:C.red,bg:C.redFaint};
+  if(d===0)return {label:"오늘 만료",color:C.red,bg:C.redFaint};
+  if(d<=30)return {label:"D-"+d,color:C.red,bg:C.redFaint};
+  if(d<=90)return {label:"D-"+d,color:C.amber,bg:C.amberFaint};
+  return {label:"D-"+d,color:C.green,bg:C.greenFaint};
+}
+
+const STATUS_OPTS=["접수","진행중","완료"];
+const STATUS_COLOR={"접수":C.red,"진행중":C.amber,"완료":C.green};
+const STATUS_BG={"접수":C.redFaint,"진행중":C.amberFaint,"완료":C.greenFaint};
+
+function Badge({label,color,bg}){
+  return <span style={{fontSize:11,fontWeight:600,color,backgroundColor:bg,borderRadius:20,padding:"3px 10px",whiteSpace:"nowrap"}}>{label}</span>;
+}
+function Field({label,children}){
+  return <div style={{marginBottom:14}}>
+    <div style={{fontSize:11,color:C.inkMuted,marginBottom:6,letterSpacing:"0.02em"}}>{label}</div>
+    {children}
+  </div>;
+}
+const inputStyle={width:"100%",backgroundColor:C.surface,border:"1px solid "+C.border,borderRadius:8,padding:"10px 12px",color:C.ink,fontSize:14};
+
+function NotConfigured(){
+  return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:24,textAlign:"center"}}>
+    <div style={{maxWidth:440}}>
+      <div style={{fontSize:22,fontWeight:700,marginBottom:12}}>Firebase 설정이 필요합니다</div>
+      <div style={{fontSize:14,color:C.inkMuted,lineHeight:1.7}}>
+        이 앱은 두 분의 기기 간 실시간 동기화를 위해 Firebase를 사용합니다.<br/>
+        multi-family/index.html 상단의 FIREBASE_CONFIG 값을 채운 뒤 다시 열어주세요.<br/>
+        설정 방법은 multi-family/README.md 를 참고하세요.
+      </div>
+    </div>
+  </div>;
+}
+
+function LoginScreen(){
+  const [email,setEmail]=useState("");
+  const [pw,setPw]=useState("");
+  const [err,setErr]=useState("");
+  const [loading,setLoading]=useState(false);
+  const submit=e=>{
+    e.preventDefault();
+    setErr(""); setLoading(true);
+    auth.signInWithEmailAndPassword(email,pw)
+      .catch(er=>setErr("로그인 실패: 이메일 또는 비밀번호를 확인해주세요."))
+      .finally(()=>setLoading(false));
+  };
+  return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+    <form onSubmit={submit} style={{width:"100%",maxWidth:340,animation:"fadeUp 0.4s ease"}}>
+      <div style={{fontSize:22,fontWeight:700,marginBottom:4,textAlign:"center"}}>다세대 관리</div>
+      <div style={{fontSize:12,color:C.inkMuted,marginBottom:28,textAlign:"center"}}>가족 계정으로 로그인하세요</div>
+      <Field label="이메일">
+        <input style={inputStyle} type="email" value={email} onChange={e=>setEmail(e.target.value)} required/>
+      </Field>
+      <Field label="비밀번호">
+        <input style={inputStyle} type="password" value={pw} onChange={e=>setPw(e.target.value)} required/>
+      </Field>
+      {err&&<div style={{fontSize:12,color:C.red,marginBottom:14}}>{err}</div>}
+      <button type="submit" disabled={loading} style={{width:"100%",backgroundColor:C.blue,border:"none",borderRadius:8,padding:"12px",color:"#0E0E12",fontWeight:700,fontSize:14,opacity:loading?0.6:1}}>
+        {loading?"로그인 중...":"로그인"}
+      </button>
+      <div style={{fontSize:11,color:C.inkFaint,marginTop:18,textAlign:"center",lineHeight:1.6}}>
+        계정이 없으신가요? Firebase 콘솔의 Authentication에서<br/>관리자가 직접 계정을 추가해야 합니다.
+      </div>
+    </form>
+  </div>;
+}
+
+function Modal({title,onClose,children}){
+  return <div onClick={onClose} style={{position:"fixed",inset:0,backgroundColor:"rgba(0,0,0,0.6)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:200}}>
+    <div onClick={e=>e.stopPropagation()} style={{backgroundColor:C.bgCard,borderRadius:"16px 16px 0 0",padding:20,width:"100%",maxWidth:480,maxHeight:"88vh",overflowY:"auto",animation:"fadeUp 0.25s ease"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+        <div style={{fontSize:16,fontWeight:700}}>{title}</div>
+        <button onClick={onClose} style={{background:"none",border:"none",color:C.inkMuted,fontSize:20,lineHeight:1}}>×</button>
+      </div>
+      {children}
+    </div>
+  </div>;
+}
+
+function UnitForm({initial,onSave,onCancel,onDelete}){
+  const [f,setF]=useState(initial||{name:"",tenantName:"",contractType:"월세",deposit:"",rent:"",contractStart:"",contractEnd:"",memo:""});
+  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+  return <div>
+    <Field label="호실명 (예: 101호)">
+      <input style={inputStyle} value={f.name} onChange={e=>set("name",e.target.value)} required/>
+    </Field>
+    <Field label="세입자 이름">
+      <input style={inputStyle} value={f.tenantName} onChange={e=>set("tenantName",e.target.value)}/>
+    </Field>
+    <Field label="계약 형태">
+      <select style={inputStyle} value={f.contractType} onChange={e=>set("contractType",e.target.value)}>
+        <option value="월세">월세</option>
+        <option value="전세">전세</option>
+        <option value="공실">공실</option>
+      </select>
+    </Field>
+    <div style={{display:"flex",gap:10}}>
+      <div style={{flex:1}}><Field label="보증금 (원)"><input style={inputStyle} type="number" value={f.deposit} onChange={e=>set("deposit",e.target.value)}/></Field></div>
+      <div style={{flex:1}}><Field label="월세 (원)"><input style={inputStyle} type="number" value={f.rent} onChange={e=>set("rent",e.target.value)} disabled={f.contractType==="전세"}/></Field></div>
+    </div>
+    <div style={{display:"flex",gap:10}}>
+      <div style={{flex:1}}><Field label="계약 시작일"><input style={inputStyle} type="date" value={f.contractStart} onChange={e=>set("contractStart",e.target.value)}/></Field></div>
+      <div style={{flex:1}}><Field label="계약 종료일"><input style={inputStyle} type="date" value={f.contractEnd} onChange={e=>set("contractEnd",e.target.value)}/></Field></div>
+    </div>
+    <Field label="메모">
+      <textarea style={{...inputStyle,minHeight:70,resize:"vertical"}} value={f.memo} onChange={e=>set("memo",e.target.value)}/>
+    </Field>
+    <div style={{display:"flex",gap:8,marginTop:8}}>
+      {onDelete&&<button onClick={onDelete} style={{flex:"0 0 auto",backgroundColor:"transparent",border:"1px solid "+C.red,borderRadius:8,padding:"12px 16px",color:C.red,fontSize:13,fontWeight:600}}>삭제</button>}
+      <button onClick={onCancel} style={{flex:1,backgroundColor:C.surface,border:"1px solid "+C.border,borderRadius:8,padding:"12px",color:C.inkMuted,fontSize:13,fontWeight:600}}>취소</button>
+      <button onClick={()=>{if(!f.name.trim())return;onSave(f);}} style={{flex:1,backgroundColor:C.blue,border:"none",borderRadius:8,padding:"12px",color:"#0E0E12",fontSize:13,fontWeight:700}}>저장</button>
+    </div>
+  </div>;
+}
+
+function IssueForm({units,initial,onSave,onCancel,onDelete}){
+  const [f,setF]=useState(initial||{unitId:units[0]?.id||"",title:"",description:"",status:"접수"});
+  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+  return <div>
+    <Field label="호실">
+      <select style={inputStyle} value={f.unitId} onChange={e=>set("unitId",e.target.value)}>
+        <option value="">공용 시설</option>
+        {units.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+      </select>
+    </Field>
+    <Field label="제목">
+      <input style={inputStyle} value={f.title} onChange={e=>set("title",e.target.value)} required/>
+    </Field>
+    <Field label="상세 설명">
+      <textarea style={{...inputStyle,minHeight:80,resize:"vertical"}} value={f.description} onChange={e=>set("description",e.target.value)}/>
+    </Field>
+    <Field label="상태">
+      <div style={{display:"flex",gap:8}}>
+        {STATUS_OPTS.map(s=><button key={s} onClick={()=>set("status",s)} style={{flex:1,backgroundColor:f.status===s?STATUS_BG[s]:C.surface,border:"1px solid "+(f.status===s?STATUS_COLOR[s]:C.border),borderRadius:8,padding:"10px",color:f.status===s?STATUS_COLOR[s]:C.inkMuted,fontSize:13,fontWeight:600}}>{s}</button>)}
+      </div>
+    </Field>
+    <div style={{display:"flex",gap:8,marginTop:8}}>
+      {onDelete&&<button onClick={onDelete} style={{flex:"0 0 auto",backgroundColor:"transparent",border:"1px solid "+C.red,borderRadius:8,padding:"12px 16px",color:C.red,fontSize:13,fontWeight:600}}>삭제</button>}
+      <button onClick={onCancel} style={{flex:1,backgroundColor:C.surface,border:"1px solid "+C.border,borderRadius:8,padding:"12px",color:C.inkMuted,fontSize:13,fontWeight:600}}>취소</button>
+      <button onClick={()=>{if(!f.title.trim())return;onSave(f);}} style={{flex:1,backgroundColor:C.blue,border:"none",borderRadius:8,padding:"12px",color:"#0E0E12",fontSize:13,fontWeight:700}}>저장</button>
+    </div>
+  </div>;
+}
+
+function UnitCard({u,openCount,onClick}){
+  const dd=ddayInfo(u.contractEnd);
+  return <div onClick={onClick} style={{backgroundColor:C.bgCard,border:"1px solid "+C.border,borderRadius:12,padding:16,marginBottom:12,cursor:"pointer",animation:"fadeUp 0.3s ease"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+      <div>
+        <div style={{fontSize:16,fontWeight:700}}>{u.name}</div>
+        <div style={{fontSize:12,color:C.inkMuted,marginTop:2}}>{u.tenantName||"공실"}</div>
+      </div>
+      <Badge label={u.contractType} color={C.blueLight} bg={C.blueFaint}/>
+    </div>
+    <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:C.inkMuted,marginBottom:10}}>
+      <span>보증금 {fmtMoney(u.deposit)}</span>
+      {u.contractType==="월세"&&<span>월세 {fmtMoney(u.rent)}</span>}
+    </div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <Badge label={dd.label} color={dd.color} bg={dd.bg}/>
+      {openCount>0&&<Badge label={"이슈 "+openCount+"건"} color={C.red} bg={C.redFaint}/>}
+    </div>
+  </div>;
+}
+
+function IssueCard({issue,unitName,onClick}){
+  return <div onClick={onClick} style={{backgroundColor:C.bgCard,border:"1px solid "+C.border,borderRadius:12,padding:16,marginBottom:10,cursor:"pointer",animation:"fadeUp 0.3s ease"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+      <div style={{fontSize:14,fontWeight:700}}>{issue.title}</div>
+      <Badge label={issue.status} color={STATUS_COLOR[issue.status]} bg={STATUS_BG[issue.status]}/>
+    </div>
+    <div style={{fontSize:12,color:C.inkMuted,marginBottom:6}}>{unitName}</div>
+    {issue.description&&<div style={{fontSize:13,color:C.ink,opacity:0.85,lineHeight:1.5}}>{issue.description}</div>}
+  </div>;
+}
+
+function App(){
+  const [user,setUser]=useState(undefined);
+  const [tab,setTab]=useState("units");
+  const [units,setUnits]=useState([]);
+  const [issues,setIssues]=useState([]);
+  const [editingUnit,setEditingUnit]=useState(null);
+  const [addingUnit,setAddingUnit]=useState(false);
+  const [editingIssue,setEditingIssue]=useState(null);
+  const [addingIssue,setAddingIssue]=useState(false);
+  const [issueFilter,setIssueFilter]=useState("전체");
+
+  useEffect(()=>{
+    if(!auth)return;
+    return auth.onAuthStateChanged(u=>setUser(u));
+  },[]);
+
+  useEffect(()=>{
+    if(!db||!user)return;
+    const unsub1=db.collection("units").orderBy("name").onSnapshot(snap=>{
+      setUnits(snap.docs.map(d=>({id:d.id,...d.data()})));
+    });
+    const unsub2=db.collection("issues").orderBy("createdAt","desc").onSnapshot(snap=>{
+      setIssues(snap.docs.map(d=>({id:d.id,...d.data()})));
+    });
+    return ()=>{unsub1();unsub2();};
+  },[user]);
+
+  if(!CONFIGURED)return <NotConfigured/>;
+  if(user===undefined)return <div style={{minHeight:"100vh"}}/>;
+  if(user===null)return <LoginScreen/>;
+
+  const saveUnit=f=>{
+    const data={...f,deposit:Number(f.deposit)||0,rent:Number(f.rent)||0};
+    if(editingUnit&&editingUnit.id){
+      db.collection("units").doc(editingUnit.id).set(data,{merge:true});
+    }else{
+      db.collection("units").add(data);
+    }
+    setEditingUnit(null); setAddingUnit(false);
+  };
+  const deleteUnit=id=>{
+    db.collection("units").doc(id).delete();
+    setEditingUnit(null);
+  };
+  const saveIssue=f=>{
+    if(editingIssue&&editingIssue.id){
+      db.collection("issues").doc(editingIssue.id).set(f,{merge:true});
+    }else{
+      db.collection("issues").add({...f,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+    }
+    setEditingIssue(null); setAddingIssue(false);
+  };
+  const deleteIssue=id=>{
+    db.collection("issues").doc(id).delete();
+    setEditingIssue(null);
+  };
+
+  const unitName=id=>units.find(u=>u.id===id)?.name||"공용 시설";
+  const openCountFor=unitId=>issues.filter(i=>i.unitId===unitId&&i.status!=="완료").length;
+  const filteredIssues=issues.filter(i=>issueFilter==="전체"||i.status===issueFilter);
+
+  return <div style={{minHeight:"100vh",backgroundColor:C.bg,color:C.ink,paddingBottom:90}}>
+    <nav style={{position:"sticky",top:0,zIndex:100,backgroundColor:"rgba(14,14,18,0.95)",backdropFilter:"blur(14px)",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 16px",height:54}}>
+      <div style={{fontSize:15,fontWeight:700,color:C.blueLight}}>다세대 관리</div>
+      <button onClick={()=>auth.signOut()} style={{background:"none",border:"none",color:C.inkMuted,fontSize:12}}>로그아웃</button>
+    </nav>
+
+    <div style={{maxWidth:560,margin:"0 auto",padding:"16px 16px 0"}}>
+      <div style={{display:"flex",gap:8,marginBottom:18}}>
+        <button onClick={()=>setTab("units")} style={{flex:1,backgroundColor:tab==="units"?C.blueFaint:"transparent",border:"1px solid "+(tab==="units"?C.blue:C.border),borderRadius:8,padding:"10px",color:tab==="units"?C.blueLight:C.inkMuted,fontSize:13,fontWeight:700}}>호실 관리</button>
+        <button onClick={()=>setTab("issues")} style={{flex:1,backgroundColor:tab==="issues"?C.blueFaint:"transparent",border:"1px solid "+(tab==="issues"?C.blue:C.border),borderRadius:8,padding:"10px",color:tab==="issues"?C.blueLight:C.inkMuted,fontSize:13,fontWeight:700}}>시설 이슈</button>
+      </div>
+
+      {tab==="units"&&<div>
+        {units.length===0&&<div style={{textAlign:"center",color:C.inkFaint,fontSize:13,padding:"40px 0"}}>등록된 호실이 없습니다.<br/>아래 버튼으로 추가해보세요.</div>}
+        {units.map(u=><UnitCard key={u.id} u={u} openCount={openCountFor(u.id)} onClick={()=>setEditingUnit(u)}/>)}
+        <button onClick={()=>setAddingUnit(true)} style={{width:"100%",backgroundColor:C.surface,border:"1px dashed "+C.border,borderRadius:12,padding:14,color:C.inkMuted,fontSize:13,fontWeight:600,marginTop:4}}>+ 호실 추가</button>
+      </div>}
+
+      {tab==="issues"&&<div>
+        <div style={{display:"flex",gap:6,marginBottom:14,overflowX:"auto"}}>
+          {["전체",...STATUS_OPTS].map(s=><button key={s} onClick={()=>setIssueFilter(s)} style={{flex:"0 0 auto",backgroundColor:issueFilter===s?C.surfaceHigh:"transparent",border:"1px solid "+C.border,borderRadius:20,padding:"6px 14px",color:issueFilter===s?C.ink:C.inkMuted,fontSize:12,fontWeight:600}}>{s}</button>)}
+        </div>
+        {filteredIssues.length===0&&<div style={{textAlign:"center",color:C.inkFaint,fontSize:13,padding:"40px 0"}}>해당하는 이슈가 없습니다.</div>}
+        {filteredIssues.map(i=><IssueCard key={i.id} issue={i} unitName={unitName(i.unitId)} onClick={()=>setEditingIssue(i)}/>)}
+        <button onClick={()=>setAddingIssue(true)} style={{width:"100%",backgroundColor:C.surface,border:"1px dashed "+C.border,borderRadius:12,padding:14,color:C.inkMuted,fontSize:13,fontWeight:600,marginTop:4}}>+ 이슈 등록</button>
+      </div>}
+    </div>
+
+    {addingUnit&&<Modal title="호실 추가" onClose={()=>setAddingUnit(false)}>
+      <UnitForm onSave={saveUnit} onCancel={()=>setAddingUnit(false)}/>
+    </Modal>}
+    {editingUnit&&<Modal title="호실 수정" onClose={()=>setEditingUnit(null)}>
+      <UnitForm initial={editingUnit} onSave={saveUnit} onCancel={()=>setEditingUnit(null)} onDelete={()=>deleteUnit(editingUnit.id)}/>
+    </Modal>}
+    {addingIssue&&<Modal title="이슈 등록" onClose={()=>setAddingIssue(false)}>
+      <IssueForm units={units} onSave={saveIssue} onCancel={()=>setAddingIssue(false)}/>
+    </Modal>}
+    {editingIssue&&<Modal title="이슈 수정" onClose={()=>setEditingIssue(null)}>
+      <IssueForm units={units} initial={editingIssue} onSave={saveIssue} onCancel={()=>setEditingIssue(null)} onDelete={()=>deleteIssue(editingIssue.id)}/>
+    </Modal>}
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
